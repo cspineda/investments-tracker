@@ -1,0 +1,6 @@
+venv
+*.pyc
+.DS_Store
+Investments Tracker.xlsx
+.idea/
+.ipynb_checkpoints/
