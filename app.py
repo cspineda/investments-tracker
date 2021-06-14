@@ -1,83 +1,44 @@
 import numpy as np
 import pandas as pd
+from forex_python.converter import CurrencyRates
 import dash
 import dash_table
 import dash_core_components as dcc
 import dash_html_components as html
 from dash.dependencies import Output, Input
-
-pd.set_option('display.float_format', lambda x: '%.4f' % x)
-
-def get_net_spend(df):
-    df = (
-        df.groupby(["Company", "Ticker", "Investment Type"])["Net Spend"]
-            .sum()
-            .reset_index()
-    )
-    return df
-
-def get_daily_spend(df):
-    df = (
-        df.groupby(["Transaction Date", "Transaction", "Investment Type"])["Total Price"]
-            .sum()
-            .reset_index()
-    )
-    df["Net Spend"] = df["Total Price"].apply(lambda x: round(abs(x), 2))
-    return df
-
-def get_p_and_l(df):
-    df = (
-        df.groupby(["Company", "Ticker", "Investment Type"])
-            .filter(lambda x: x["Quantity"].sum().round(3) == 0)
-            .groupby(["Company", "Investment Type"])
-            .agg({"Quantity": np.sum, "Total Price": np.sum})
-            .reset_index()
-    )
-    return df
-
-def avg_cost_per_asset(df):
-    df = (
-        df.groupby(["Company", "Ticker", "Investment Type"])
-            .filter(lambda x: x["Quantity"].sum().round(3) > 0)
-            .groupby(["Company", "Ticker", "Investment Type"])
-            .agg({"Quantity": np.sum, "Total Price": np.sum})
-            .reset_index()
-    )
-    df["Avg Cost"] = round(abs(df["Total Price"]) / df["Quantity"], 2)
-    df["Total Price"] = df["Total Price"].apply(lambda x: round(x, 2))
-    df.drop('Investment Type', axis=1, inplace=True)
-    return df
+from utils.utils import *
 
 
-def stonk_split(df, company, date, ratio):
-    co_filter = (df["Company"] == company) | (df["Ticker"] == company)
-    date_filter = (df["Transaction Date"] <= date)
-
-    if ratio == "4:1":
-        df.loc[(co_filter & date_filter), "Quantity"] *= 4
-        df.loc[(co_filter & date_filter), "Price Per"] /= 4
-    return df
-
-def investment_round(df):
-    df["Total Price"] = round(df["Total Price"], 2)
-    if df['Investment Type'] == 'Crypto':
-        df["Quantity"] = round(df["Quantity"], 2)
-    else:
-        df["Quantity"] = round(df["Quantity"], 4)
-    return df
-
-
+# # ETL
+# crypto_df = pd.read_excel('Investments Tracker.xlsx', sheet_name="Crypto", date_parser="Transaction Date")
+# crypto_df["Investment Type"] = "Crypto"
+# stonks_df = pd.read_excel('Investments Tracker.xlsx', sheet_name="Stonks", date_parser="Transaction Date")
+# stonks_df["Investment Type"] = "Stonks"
+# stonks_df = stonk_split(stonks_df, "AAPL", "2020-08-28", "4:1")
+# df = pd.concat([crypto_df, stonks_df])
+# df["Net Spend"] = df['Total Price'] * -1
+# avg_cost_cols = ['Company', 'Ticker', 'Quantity', 'Total Price', 'Avg Cost']
 
 # ETL
-crypto_df = pd.read_excel('Investments Tracker.xlsx', sheet_name="Crypto", date_parser="Transaction Date")
-crypto_df["Investment Type"] = "Crypto"
-stonks_df = pd.read_excel('Investments Tracker.xlsx', sheet_name="Stonks", date_parser="Transaction Date")
-stonks_df["Investment Type"] = "Stonks"
-stonks_df = stonk_split(stonks_df, "AAPL", "2020-08-28", "4:1")
-df = pd.concat([crypto_df, stonks_df])
-df = df.apply(lambda x: investment_round(x), axis=1)
-df["Net Spend"] = df['Total Price'] * -1
-avg_cost_cols = ['Company', 'Ticker', 'Quantity', 'Total Price', 'Avg Cost']
+c = CurrencyRates()
+usd_to_euro = c.get_rate('USD', 'EUR')
+euro_to_usd = c.get_rate('EUR', 'USD')
+
+metrics = ["Quantity", "Total Cost", "Net Margin", "Net Earnings", "Fees"]
+currency_metrics = ["Price Per", "Total Cost", "Fees", "Net Cost",
+                    "Total Earnings", "Net Earnings", "Margin", "Net Margin"]
+
+df = pd.DataFrame()
+for asset in ["Crypto", "Stonks"]:
+    temp_df = (
+        pd.read_excel('Investments Tracker.xlsx', sheet_name=asset, date_parser="Transaction Date")
+    )
+    temp_df = clean_table(temp_df, asset, [usd_to_euro, euro_to_usd])
+    df = df.append(temp_df)
+
+df = stonk_split(df, "AAPL", "2020-08-28", "4:1")
+df = convert_currency(df, currency_metrics, "USD")
+
 
 external_stylesheets = [
     {
@@ -178,7 +139,8 @@ app.layout = html.Div(
                         html.Label("Average Cost per Asset"),
                         dash_table.DataTable(
                             id='avg-asset-cost',
-                            columns=[{"id": i, "name": i} for i in avg_cost_cols],
+                            columns=[{"id": i, "name": i} for i in
+                                     ['Company', 'Ticker', 'Quantity', 'Total Price', 'Avg Cost']],
                             #data=investments_total.to_dict('records'),
                             style_data={
                                 'whiteSpace': 'normal',
@@ -225,7 +187,7 @@ app.layout = html.Div(
         Output("net-spend", "figure"),
         Output("spend-over-time", "figure"),
         Output("sell-over-time", "figure"),
-        Output("stonks-net-spend", "figure")
+       # Output("stonks-net-spend", "figure")
     ],
     [
         Input("investment-type-filter", "value"),
@@ -240,22 +202,22 @@ def update_charts(investment_type, start_date, end_date):
         & (df["Transaction Date"] <= end_date)
     )
     filtered_data = df.loc[mask, :]
-    net_spend = get_net_spend(filtered_data)
-    investments_daily = get_daily_spend(filtered_data)
+    net_margin = get_totals_per_asset(filtered_data, metrics)
+    investments_daily = get_daily_totals(filtered_data, metrics)
     p_and_l = get_p_and_l(filtered_data)
 
-    # net spend chart
-    net_spend_chart = {
+    # net margin chart
+    net_margin_chart = {
         'data': [
             {
-                'x': net_spend['Company'],
-                'y': net_spend['Net Spend'],
+                'x': net_margin['Company'],
+                'y': net_margin['Net Margin'],
                 'type': 'bar',
             },
         ],
         'layout': {
             'title': {
-                'text': 'Investments Net Spend by Company',
+                'text': 'Investments Net Margin by Company',
                 "x": 0.05,
                 "xanchor": "left",
             },
@@ -273,8 +235,8 @@ def update_charts(investment_type, start_date, end_date):
     spend_line_chart = {
         'data': [
             {
-                'x': investments_daily.loc[investments_daily.Transaction == 'Buy', 'Transaction Date'],
-                'y': investments_daily.loc[investments_daily.Transaction == 'Buy', 'Net Spend'],
+                'x': investments_daily.loc[investments_daily["Total Cost"] > 0, 'Transaction Date'],
+                'y': investments_daily.loc[investments_daily["Total Cost"] > 0, 'Total Cost'],
                 'type': 'line',
             },
         ],
@@ -298,8 +260,8 @@ def update_charts(investment_type, start_date, end_date):
     sell_line_chart = {
         'data': [
             {
-                'x': investments_daily.loc[investments_daily.Transaction == 'Sell', 'Transaction Date'],
-                'y': investments_daily.loc[investments_daily.Transaction == 'Sell', 'Net Spend'],
+                'x': investments_daily.loc[investments_daily['Net Earnings'] > 0, 'Transaction Date'],
+                'y': investments_daily.loc[investments_daily['Net Earnings'] > 0, 'Net Earnings'],
                 'type': 'line',
             },
         ],
@@ -319,31 +281,31 @@ def update_charts(investment_type, start_date, end_date):
         }
     }
 
-    # p and l
-    p_and_l_chart = {
-        'data': [
-            {
-                'x': p_and_l['Company'],
-                'y': p_and_l['Total Price'],
-                'type': 'bar',
-            },
-        ],
-        'layout': {
-            'title': {
-                'text': 'Profit and Loss (Completely Sold Assets)',
-                "x": 0.05,
-                "xanchor": "left",
-            },
-            "yaxis": {
-                #     "tickprefix": "$",
-                "fixedrange": True
-            },
-            "xaxis": {
-                "fixedrange": True
-            }
-        }
-    }
-    return net_spend_chart, spend_line_chart, sell_line_chart, p_and_l_chart
+    # # p and l
+    # p_and_l_chart = {
+    #     'data': [
+    #         {
+    #             'x': p_and_l['Company'],
+    #             'y': p_and_l['Total Price'],
+    #             'type': 'bar',
+    #         },
+    #     ],
+    #     'layout': {
+    #         'title': {
+    #             'text': 'Profit and Loss (Completely Sold Assets)',
+    #             "x": 0.05,
+    #             "xanchor": "left",
+    #         },
+    #         "yaxis": {
+    #             #     "tickprefix": "$",
+    #             "fixedrange": True
+    #         },
+    #         "xaxis": {
+    #             "fixedrange": True
+    #         }
+    #     }
+    # }
+    return net_margin_chart, spend_line_chart, sell_line_chart#, p_and_l_chart
 
 @app.callback(
     [
