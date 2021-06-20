@@ -50,22 +50,47 @@ def get_totals_per_asset(df, metrics):
 
 def get_daily_totals(df, metrics):
     df = (
-        df.groupby(["Transaction Date", "Ticker", "Investment Type"])
+        df.groupby("Transaction Date")
             .agg({metric: np.sum for metric in metrics})
             .reset_index()
+            .sort_values("Transaction Date")
     )
     return df
 
 
-def get_p_and_l(df):
-    df = (
-        df.groupby(["Company", "Ticker", "Investment Type"])
-            .filter(lambda x: x["Quantity"].sum().round(3) == 0)
-            .groupby(["Company", "Investment Type"])
-            .agg({"Quantity": np.sum, "Net Margin": np.sum})
-            .reset_index()
-    )
-    return df
+def get_profit_and_loss(df):
+    cols = ["Company", "Quantity", "Net Cost", "Net Earnings", "Price Per", "Profit/Loss"]
+    profit_loss_df = pd.DataFrame(columns=cols)
+
+    assets_sold = df.loc[df.Transaction == "Sell", "Company"].unique()
+    assets_sold_df = df.loc[df.Company.isin(assets_sold)].sort_values(['Company', 'Transaction Date'])
+
+    for asset in assets_sold:
+        a = asset
+        q = 0
+        nc = 0
+        m = 0
+        ne = 0
+        pp = 0
+        profit_loss = 0
+
+        for i, row in df.iterrows():
+            if row.Company == asset:
+                if row.Transaction == "Buy":
+                    q += row["Quantity"]
+                    nc += row["Net Cost"]
+                    m += row["Net Cost"]
+                    pp = m / q
+                elif row.Transaction == "Sell":
+                    ne += row["Net Earnings"]
+                    p_l = row["Net Earnings"] - (abs(row.Quantity) * pp)
+                    profit_loss += p_l
+                    q += row.Quantity
+                    m -= row["Net Earnings"]
+                    pp = m / q if q > 0 else 0
+        profit_loss_df = profit_loss_df.append(pd.DataFrame([[asset, q, nc, ne, pp, profit_loss]], columns=cols))
+
+    return profit_loss_df.sort_values('Profit/Loss', ascending=False)
 
 
 def avg_cost_per_asset(df):
@@ -73,29 +98,42 @@ def avg_cost_per_asset(df):
         df.groupby(["Company", "Ticker", "Investment Type"])
             .filter(lambda x: x["Quantity"].sum().round(3) > 0)
             .groupby(["Company", "Ticker", "Investment Type"])
-            .agg({"Quantity": np.sum, "Net Cost": np.sum})
+            .agg({"Quantity": np.sum, "Net Cost": np.sum, "Net Earnings": np.sum})
             .reset_index()
     )
-    df["Avg Cost"] = round(abs(df["Net Cost"]) / df["Quantity"], 3)
+    df["Profit"] = df["Net Earnings"] - df["Net Cost"]
+    df["Avg Cost"] = round(df["Profit"] / df["Quantity"], 3)
     if df['Investment Type'].any() == 'Crypto':
         df["Quantity"] = round(df["Quantity"], 4)
     else:
         df["Quantity"] = round(df["Quantity"], 2)
-    df.drop('Investment Type', axis=1, inplace=True)
+    df.drop(['Investment Type'], axis=1, inplace=True)
+    df["Net Cost"] = round(df["Net Cost"], 2)
     return df
 
 
 def convert_currency(df, metrics, currency="USD"):
     if currency == "USD":
-        df.loc[df.Currency == "Euro", metrics] = (
-            df.loc[df.Currency == "Euro", metrics]
-                .multiply(df.loc[df.Currency == "Euro", "EUR/USD Exchange Rate"], axis="index")
+        df.loc[df.Currency == "EUR", metrics] = (
+            df.loc[df.Currency == "EUR", metrics]
+                .multiply(df.loc[df.Currency == "EUR", "EUR/USD Exchange Rate"], axis="index")
         )
     else:
-        df.loc[df.Currency == "US Dollar", metrics] = (
-            df.loc[df.Currency == "Euro", metrics]
-                .multiply(df.loc[df.Currency == "Euro", "USD/EUR Exchange Rate"], axis="index")
+        df.loc[df.Currency == "USD", metrics] = (
+            df.loc[df.Currency == "USD", metrics]
+                .multiply(df.loc[df.Currency == "USD", "USD/EUR Exchange Rate"], axis="index")
         )
     df = investment_round(df)
     df["Current Currency"] = currency
+    return df
+
+
+def aggregate_date(df, aggregation='daily'):
+    if aggregation == 'daily':
+        pass
+    elif aggregation == 'monthly':
+        df.loc[:, "Transaction Date"] = df['Transaction Date'].apply(lambda x: str(x)[:7] + "-01")
+    else:
+        df.loc[:, "Transaction Date"] = df['Transaction Date'].apply(lambda x: str(x).split("-")[0] + "-01-01")
+    df.loc[:, "Transaction Date"] = pd.to_datetime(df["Transaction Date"])
     return df

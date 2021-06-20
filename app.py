@@ -9,16 +9,6 @@ from dash.dependencies import Output, Input
 from utils.utils import *
 
 
-# # ETL
-# crypto_df = pd.read_excel('Investments Tracker.xlsx', sheet_name="Crypto", date_parser="Transaction Date")
-# crypto_df["Investment Type"] = "Crypto"
-# stonks_df = pd.read_excel('Investments Tracker.xlsx', sheet_name="Stonks", date_parser="Transaction Date")
-# stonks_df["Investment Type"] = "Stonks"
-# stonks_df = stonk_split(stonks_df, "AAPL", "2020-08-28", "4:1")
-# df = pd.concat([crypto_df, stonks_df])
-# df["Net Spend"] = df['Total Price'] * -1
-# avg_cost_cols = ['Company', 'Ticker', 'Quantity', 'Total Price', 'Avg Cost']
-
 # ETL
 c = CurrencyRates()
 usd_to_euro = c.get_rate('USD', 'EUR')
@@ -37,7 +27,6 @@ for asset in ["Crypto", "Stonks"]:
     df = df.append(temp_df)
 
 df = stonk_split(df, "AAPL", "2020-08-28", "4:1")
-df = convert_currency(df, currency_metrics, "USD")
 
 
 external_stylesheets = [
@@ -56,25 +45,28 @@ app.layout = html.Div(
         html.Div(
             children=[
                 html.H1(
-                    children='My Investments Portfolio',
+                    children='Investments Portfolio',
                     className="header-title",
                 ),
                 html.P(
-                    children='''Including both my CRYPTO and STONKS assets.''',
+                    children='''Both my CRYPTO and STONKS assets.''',
                     className="header-description",
                 ),
             ],
             className='header',
         ),
 
-        # Net Spend Bar Chart
+        # filters
         html.Div(
             children=[
 
-                # net spend
+                # investment type filter
                 html.Div(
                     children=[
-                        html.Div(children="Investment Type", className="menu-title"),
+                        html.Div(
+                            children="Investment Type",
+                            className="menu-title"
+                        ),
                         dcc.Dropdown(
                             id="investment-type-filter",
                             options=[
@@ -87,18 +79,57 @@ app.layout = html.Div(
                         ),
                     ]
                 ),
+
+                # currency filter
+                html.Div(
+                    children=[
+                        html.Div(
+                            children="Currency",
+                            className="menu-title"
+                        ),
+                        dcc.Dropdown(
+                            id="currency-filter",
+                            options=[
+                                {"label": c, "value": c}
+                                for c in np.sort(df["Currency"].unique())
+                            ],
+                            value="USD",
+                            clearable=False,
+                            className="dropdown",
+                        ),
+                    ]
+                ),
+
+                # date range filter
                 html.Div(
                     children=[
                         html.Div(
                             children="Date Range",
                             className="menu-title"
-                            ),
+                        ),
                         dcc.DatePickerRange(
                             id="date-range",
                             min_date_allowed=df["Transaction Date"].min().date(),
                             max_date_allowed=df["Transaction Date"].max().date(),
                             start_date=df["Transaction Date"].min().date(),
                             end_date=df["Transaction Date"].max().date(),
+                        ),
+                    ]
+                ),
+
+                # aggregation filter
+                html.Div(
+                    children=[
+                        html.Div(
+                            children="Aggregation",
+                            className="menu-title"
+                        ),
+                        dcc.Dropdown(
+                            id="aggregation-filter",
+                            options=[{"label": value, "value": value} for value in ["daily", "monthly", "yearly"]],
+                            value="daily",
+                            clearable=False,
+                            className="dropdown",
                         ),
                     ]
                 ),
@@ -140,7 +171,7 @@ app.layout = html.Div(
                         dash_table.DataTable(
                             id='avg-asset-cost',
                             columns=[{"id": i, "name": i} for i in
-                                     ['Company', 'Ticker', 'Quantity', 'Total Price', 'Avg Cost']],
+                                     ['Company', 'Ticker', 'Quantity', 'Net Cost', 'Avg Cost']],
                             #data=investments_total.to_dict('records'),
                             style_data={
                                 'whiteSpace': 'normal',
@@ -170,7 +201,7 @@ app.layout = html.Div(
                 # Profit and Loss
                 html.Div(
                     dcc.Graph(
-                        id='stonks-net-spend',
+                        id='profit-loss',
                         config={"displayModeBar": False},
                     ),
                     className="card"
@@ -187,24 +218,31 @@ app.layout = html.Div(
         Output("net-spend", "figure"),
         Output("spend-over-time", "figure"),
         Output("sell-over-time", "figure"),
-       # Output("stonks-net-spend", "figure")
+        Output("profit-loss", "figure")
     ],
     [
         Input("investment-type-filter", "value"),
         Input("date-range", "start_date"),
         Input("date-range", "end_date"),
+        Input("currency-filter", "value"),
+        Input("aggregation-filter", "value")
     ],
 )
-def update_charts(investment_type, start_date, end_date):
+def update_charts(investment_type, start_date, end_date, currency, aggregation):
     mask = (
         (df["Investment Type"] == investment_type)
         & (df["Transaction Date"] >= start_date)
         & (df["Transaction Date"] <= end_date)
     )
+
+    # etl
     filtered_data = df.loc[mask, :]
+    filtered_data = convert_currency(filtered_data, currency_metrics, currency)
     net_margin = get_totals_per_asset(filtered_data, metrics)
+    filtered_data = aggregate_date(filtered_data, aggregation=aggregation)
     investments_daily = get_daily_totals(filtered_data, metrics)
-    p_and_l = get_p_and_l(filtered_data)
+    profit_loss = get_profit_and_loss(filtered_data)
+    currency_marker = "$" if currency == "USD" else "€"
 
     # net margin chart
     net_margin_chart = {
@@ -222,7 +260,7 @@ def update_charts(investment_type, start_date, end_date):
                 "xanchor": "left",
             },
             "yaxis": {
-           #     "tickprefix": "€",
+                "tickprefix": currency_marker,
                 "fixedrange": True
             },
             "xaxis": {
@@ -247,7 +285,7 @@ def update_charts(investment_type, start_date, end_date):
                 "xanchor": "left",
             },
             "yaxis": {
-                #  "tickprefix": "€",
+                "tickprefix": currency_marker,
                 "fixedrange": True
             },
             "xaxis": {
@@ -272,7 +310,7 @@ def update_charts(investment_type, start_date, end_date):
                 "xanchor": "left",
             },
             "yaxis": {
-                #  "tickprefix": "€",
+                "tickprefix": currency_marker,
                 "fixedrange": True
             },
             "xaxis": {
@@ -281,31 +319,31 @@ def update_charts(investment_type, start_date, end_date):
         }
     }
 
-    # # p and l
-    # p_and_l_chart = {
-    #     'data': [
-    #         {
-    #             'x': p_and_l['Company'],
-    #             'y': p_and_l['Total Price'],
-    #             'type': 'bar',
-    #         },
-    #     ],
-    #     'layout': {
-    #         'title': {
-    #             'text': 'Profit and Loss (Completely Sold Assets)',
-    #             "x": 0.05,
-    #             "xanchor": "left",
-    #         },
-    #         "yaxis": {
-    #             #     "tickprefix": "$",
-    #             "fixedrange": True
-    #         },
-    #         "xaxis": {
-    #             "fixedrange": True
-    #         }
-    #     }
-    # }
-    return net_margin_chart, spend_line_chart, sell_line_chart#, p_and_l_chart
+    # profit and loss
+    profit_loss_chart = {
+        'data': [
+            {
+                'x': profit_loss['Company'],
+                'y': profit_loss['Profit/Loss'],
+                'type': 'bar',
+            },
+        ],
+        'layout': {
+            'title': {
+                'text': 'Profit and Loss',
+                "x": 0.05,
+                "xanchor": "left",
+            },
+            "yaxis": {
+                "tickprefix": currency_marker,
+                "fixedrange": True
+            },
+            "xaxis": {
+                "fixedrange": True
+            }
+        }
+    }
+    return net_margin_chart, spend_line_chart, sell_line_chart, profit_loss_chart
 
 @app.callback(
     [
@@ -315,15 +353,17 @@ def update_charts(investment_type, start_date, end_date):
         Input("investment-type-filter", "value"),
         Input("date-range", "start_date"),
         Input("date-range", "end_date"),
+        Input("currency-filter", "value")
     ],
 )
-def update_table(investment_type, start_date, end_date):
+def update_table(investment_type, start_date, end_date, currency):
     mask = (
             (df["Investment Type"] == investment_type)
             & (df["Transaction Date"] >= start_date)
             & (df["Transaction Date"] <= end_date)
     )
     filtered_data = df.loc[mask, :]
+    filtered_data = convert_currency(filtered_data, currency_metrics, currency)
     avg_cost = avg_cost_per_asset(filtered_data)
     return [avg_cost.to_dict('records')]
 
