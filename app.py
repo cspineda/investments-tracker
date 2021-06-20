@@ -206,6 +206,15 @@ app.layout = html.Div(
                     ),
                     className="card"
                 ),
+
+                # Capital Gains Tax
+                html.Div(
+                    dcc.Graph(
+                        id='capital-gains',
+                        config={"displayModeBar": False},
+                    ),
+                    className="card"
+                ),
             ],
             className="wrapper"
         )
@@ -218,7 +227,8 @@ app.layout = html.Div(
         Output("net-spend", "figure"),
         Output("spend-over-time", "figure"),
         Output("sell-over-time", "figure"),
-        Output("profit-loss", "figure")
+        Output("profit-loss", "figure"),
+        Output("capital-gains", "figure"),
     ],
     [
         Input("investment-type-filter", "value"),
@@ -241,7 +251,18 @@ def update_charts(investment_type, start_date, end_date, currency, aggregation):
     net_margin = get_totals_per_asset(filtered_data, metrics)
     filtered_data = aggregate_date(filtered_data, aggregation=aggregation)
     investments_daily = get_daily_totals(filtered_data, metrics)
-    profit_loss = get_profit_and_loss(filtered_data)
+
+    # profit loss - needs to take into account historical buy-sell
+    mask_pl = (
+            (df["Investment Type"] == investment_type)
+            & (df["Transaction Date"] <= end_date)
+    )
+    filtered_data_pl = df.loc[mask_pl, :]
+    filtered_data_pl = convert_currency(filtered_data_pl, currency_metrics, currency)
+    profit_loss = get_profit_and_loss(filtered_data_pl)
+
+    taxes_df = get_capital_gains(filtered_data_pl)
+
     currency_marker = "$" if currency == "USD" else "€"
 
     # net margin chart
@@ -343,7 +364,33 @@ def update_charts(investment_type, start_date, end_date, currency, aggregation):
             }
         }
     }
-    return net_margin_chart, spend_line_chart, sell_line_chart, profit_loss_chart
+
+    # capital gains tax
+    capital_gains_tax_chart = {
+        'data': [
+            {
+                'x': taxes_df['Year'],
+                'y': taxes_df['Capital Gains Tax'],
+                'type': 'bar',
+            },
+        ],
+        'layout': {
+            'title': {
+                'text': 'Capital Gains Tax',
+                "x": 0.05,
+                "xanchor": "left",
+            },
+            "yaxis": {
+                "tickprefix": currency_marker,
+                "fixedrange": True
+            },
+            "xaxis": {
+                "fixedrange": True,
+                "type": "category"
+            }
+        }
+    }
+    return net_margin_chart, spend_line_chart, sell_line_chart, profit_loss_chart, capital_gains_tax_chart
 
 @app.callback(
     [

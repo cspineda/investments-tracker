@@ -137,3 +137,52 @@ def aggregate_date(df, aggregation='daily'):
         df.loc[:, "Transaction Date"] = df['Transaction Date'].apply(lambda x: str(x).split("-")[0] + "-01-01")
     df.loc[:, "Transaction Date"] = pd.to_datetime(df["Transaction Date"])
     return df
+
+
+def get_capital_gains(df, tax_rate=.35, verbose=False):
+    df["Transaction Year"] = df['Transaction Date'].apply(lambda x: str(x).split("-")[0]).astype(str)
+
+    assets_sold = df.loc[df.Transaction == "Sell", "Company"].unique()
+    years = df.loc[df.Transaction == "Sell", "Transaction Year"].unique()
+    profit_loss_dict = {k: {year: 0 for year in years} for k in assets_sold}
+
+    for asset in assets_sold:
+        q = 0
+        m = 0
+        pp = 0
+
+        for i, row in df.iterrows():
+            if row.Company == asset:
+                if row.Transaction == "Buy":
+                    q += row["Quantity"]
+                    m += row["Net Cost"]
+                    pp = m / q
+                    if verbose:
+                        print("Bought {} of {} for {}".format(row["Quantity"], asset, row["Net Cost"]))
+                elif row.Transaction == "Sell":
+                    p_l = row["Net Earnings"] - (abs(row.Quantity) * pp)
+                    q += row.Quantity
+                    m -= row["Net Earnings"]
+                    pp = m / q if q > 0 else 0
+                    year = row["Transaction Year"]
+                    if verbose:
+                        print("Sold {} of {} for {} on {}".format(
+                            row["Quantity"], asset, row["Net Earnings"], row["Transaction Year"]
+                        ))
+
+                    profit_loss_dict[asset][year] += p_l
+
+    years_dict = {year: 0 for year in years}
+
+    for key, value in profit_loss_dict.items():
+        for year in years:
+            years_dict[year] += value[year]
+
+    capital_gains_df = (
+        pd.DataFrame.from_dict(years_dict, orient='index', columns=['Profit/Loss'])
+            .reset_index()
+            .rename(columns={"index": "Year"})
+    )
+    capital_gains_df["Capital Gains Tax"] = capital_gains_df["Profit/Loss"] * tax_rate
+
+    return capital_gains_df
