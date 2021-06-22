@@ -186,3 +186,16 @@ def get_capital_gains(df, tax_rate=.35, verbose=False):
     capital_gains_df["Capital Gains Tax"] = capital_gains_df["Profit/Loss"] * tax_rate
 
     return capital_gains_df
+
+
+def transform_dtypes(df, dt_cols, numeric_cols, obj_cols=None):
+    df = df.replace("", np.nan)
+    df = df.replace(",", "")
+    for col in dt_cols:
+        df[col] = pd.to_datetime(df[col])
+    for col in numeric_cols:
+        df[col] = pd.to_numeric(df[col])
+    if obj_cols:
+        for col in obj_cols:
+            df[col] = df[col].astype(str)
+    return df

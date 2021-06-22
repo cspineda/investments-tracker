@@ -1,5 +1,7 @@
 import numpy as np
 import pandas as pd
+import gspread
+from oauth2client.service_account import ServiceAccountCredentials
 from forex_python.converter import CurrencyRates
 import dash
 import dash_table
@@ -9,6 +11,13 @@ from dash.dependencies import Output, Input
 from utils.utils import *
 
 
+# Google Service Account
+scope = ['https://spreadsheets.google.com/feeds','https://www.googleapis.com/auth/drive']
+credentials = ServiceAccountCredentials.from_json_keyfile_name(
+         'credentials/service_account.json', scope
+)
+gc = gspread.authorize(credentials)
+
 # ETL
 c = CurrencyRates()
 usd_to_euro = c.get_rate('USD', 'EUR')
@@ -17,17 +26,19 @@ euro_to_usd = c.get_rate('EUR', 'USD')
 metrics = ["Quantity", "Total Cost", "Net Margin", "Net Earnings", "Fees"]
 currency_metrics = ["Price Per", "Total Cost", "Fees", "Net Cost",
                     "Total Earnings", "Net Earnings", "Margin", "Net Margin"]
+dt_cols = ["Transaction Date"]
+numeric_cols = ['Total Earnings', 'Quantity', 'Net Earnings', 'Net Cost', 'Price Per', 'Total Cost', 'Fees']
 
 df = pd.DataFrame()
-for asset in ["Crypto", "Stonks"]:
-    temp_df = (
-        pd.read_excel('Investments Tracker.xlsx', sheet_name=asset, date_parser="Transaction Date")
-    )
-    temp_df = clean_table(temp_df, asset, [usd_to_euro, euro_to_usd])
+for sheet in gc.open("Investments Tracker").worksheets():
+    data = sheet.get_all_values()
+    headers = data.pop(0)
+    temp_df = pd.DataFrame(data, columns=headers)
+    temp_df = transform_dtypes(temp_df, dt_cols, numeric_cols, obj_cols=None)
+    temp_df = clean_table(temp_df, sheet.title, [usd_to_euro, euro_to_usd])
     df = df.append(temp_df)
 
 df = stonk_split(df, "AAPL", "2020-08-28", "4:1")
-
 
 external_stylesheets = [
     {

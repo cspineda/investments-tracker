@@ -4,3 +4,5 @@ venv
 Investments Tracker.xlsx
 .idea/
 .ipynb_checkpoints/
+credentials/
+dev.ipynb
