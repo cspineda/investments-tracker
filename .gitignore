@@ -3,4 +3,10 @@ venv
 .DS_Store
 Investments Tracker.xlsx
 .idea/
+<<<<<<< HEAD
 .ipynb_checkpoints/
+=======
+.ipynb_checkpoints/
+credentials/
+dev.ipynb
+>>>>>>> dev
